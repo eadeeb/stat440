@@ -1,0 +1,114 @@
+---
+title: "House Prices Modelling File"
+author: "Team: be \n (Ebrahim Adeeb, 301056620)"
+date: "September 6, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+## Load Packages
+library(dplyr) # For data manipulation (not actually used...)
+```
+
+```{r useful_functions, include=FALSE}
+# Evaluation metric (RMSE of log prices)
+eval_metric <- function(predicted_sales_price, actual_sales_price){
+  sqrt(mean((log(predicted_sales_price) - log(actual_sales_price))^2))
+}
+```
+
+## Load in and explore data
+
+```{r load_data}
+house_prices_data <- read.csv('data/train.csv')
+```
+
+First, let's glance at the data, which consists of `r nrow(house_prices_data)` rows and `r ncol(house_prices_data)` columns.
+
+```{r head_data}
+head(house_prices_data)
+```
+
+Whoa, that's a lot of columns! It's too big for a pairs plot, so let's first isolate the 12 non-factor variables most correlated with the outcome.
+
+```{r get_correlated}
+# First, let's isolate and count the non-factor columns/variables
+nonfactor_columns <- which(sapply(house_prices_data, class) != 'factor')
+num_nonfactor_columns <- length(nonfactor_columns)
+
+# Now, calculate correlations
+corr_matrix <- cor(house_prices_data[, nonfactor_columns])
+
+# Lastly, isolate 12 most correlated and print them
+most_correlated <- sort(abs(corr_matrix[rownames(corr_matrix) != 'SalePrice', colnames(corr_matrix) == 'SalePrice']), decreasing=TRUE)[1:12]
+most_correlated
+
+# Now, just grab the names of those columns
+most_correlated <- names(most_correlated )
+```
+
+but let's try plotting the outcome ('SalePrice') vs each column.
+
+```{r pairs_plot, fig.width=8, fig.height=10}
+# Create a grid of plots
+par(mfrow=c(3, 4))
+
+# Lastly, loop through all non-factor variables and plot them vs. sales price
+for(variable_ref in 1:12){
+  plot(house_prices_data[, colnames(house_prices_data) == most_correlated[variable_ref]], house_prices_data$SalePrice, xlab=most_correlated[variable_ref], ylab="Sales Price")
+}
+```
+
+## Build a model and explore it
+
+We build a model on the two most correlated variables, "OverallQual" and "GrLivArea"
+
+```{r fit_model, echo=FALSE}
+lm_model <- lm(SalePrice ~ OverallQual + GrLivArea, data = house_prices_data)
+```
+
+```{r visualize_model}
+summary(lm_model)
+plot(lm_model)
+```
+
+
+## Validation
+
+Model looks good (or not...). Now, let's validate:
+
+```{r cross_validation}
+# leave-one-out cross-validation
+out_of_sample_prediction <- rep(NA, nrow(house_prices_data))
+for(data_point in 1:nrow(house_prices_data)){
+  # Fit model on data with point left out
+  lm_model_loo <- lm(SalePrice ~ OverallQual + GrLivArea, data = house_prices_data[-data_point, ])
+  out_of_sample_prediction[data_point] <- predict(lm_model_loo, newdata = house_prices_data[data_point, ])
+}
+```
+
+Oops, we get `r sum(out_of_sample_prediction < 0)` negative house price predictions. So let's set them to 100 dollars, arbitrarily, and calculate our leave-one-out RMSE.
+
+```{r evaluate_cv}
+out_of_sample_prediction[out_of_sample_prediction < 0] <- 100
+eval_metric(out_of_sample_prediction, house_prices_data$SalePrice)
+```
+
+Well, a score of `r eval_metric(out_of_sample_prediction, house_prices_data$SalePrice)` isn't great, but let's create a submission file anyways
+
+## Create Submission File
+
+```{r load_test_ data}
+# Load and predict on test set
+house_prices_data_test <- read.csv('data/test.csv')
+predicted_values <- predict(lm_model, newdata = house_prices_data_test )
+
+# Create file for submission
+submission_matrix <- data.frame(cbind(house_prices_data_test$Id, predicted_values))
+colnames(submission_matrix) = c('Id', 'SalePrice')
+submission_matrix$SalePrice <- round(submission_matrix$SalePrice)
+submission_matrix$SalePrice <- pmax(100, submission_matrix$SalePrice)
+
+# Write submission file
+write.csv(submission_matrix, file='submission_file.csv', row.names = FALSE)
+```
